@@ -1,4 +1,4 @@
-package sense
+package parser
 
 import (
 	"encoding/json"
