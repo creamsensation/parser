@@ -13,7 +13,7 @@ import (
 )
 
 type Parse interface {
-	QueryParam(key string, target any) error
+	Query(key string, target any) error
 	PathValue(key string, target any) error
 	File(filename string) (form.Multipart, error)
 	Files(filesnames ...string) ([]form.Multipart, error)
@@ -22,7 +22,7 @@ type Parse interface {
 	Xml(target any) error
 	Url(target any) error
 	
-	MustQueryParam(key string, target any)
+	MustQuery(key string, target any)
 	MustPathValue(key string, target any)
 	MustFile(filename string) form.Multipart
 	MustFiles(filesnames ...string) []form.Multipart
@@ -46,39 +46,35 @@ func New(r *http.Request, defaultBytes []byte, limit int64) *Parser {
 	}
 }
 
-func (p *Parser) QueryParam(key string, target any) error {
-	t := reflect.TypeOf(target)
-	if t.Kind() != reflect.Ptr {
-		return ErrorPointerTarget
+func (p *Parser) Query(key string, target any) error {
+	q := p.r.URL.Query()
+	qv, ok := q[key]
+	if !ok {
+		return ErrorQueryMissing
 	}
-	v := reflect.ValueOf(target)
-	if !p.r.URL.Query().Has(key) {
-		return ErrorQueryParamMissing
+	n := len(qv)
+	if n == 1 {
+		return util.ConvertValue(qv[0], target)
 	}
-	stringValue := p.r.URL.Query().Get(key)
-	util.SetValueToReflected(t.Elem().Kind(), v.Elem(), stringValue)
+	if n > 1 {
+		return util.ConvertSlice(qv, target)
+	}
 	return nil
 }
 
-func (p *Parser) MustQueryParam(key string, target any) {
-	err := p.QueryParam(key, target)
+func (p *Parser) MustQuery(key string, target any) {
+	err := p.Query(key, target)
 	if err != nil {
 		panic(err)
 	}
 }
 
 func (p *Parser) PathValue(key string, target any) error {
-	t := reflect.TypeOf(target)
-	if t.Kind() != reflect.Ptr {
-		return ErrorPointerTarget
-	}
-	v := reflect.ValueOf(target)
 	pathValue := p.r.PathValue(key)
 	if len(pathValue) == 0 {
 		return ErrorPathValueMissing
 	}
-	util.SetValueToReflected(t.Elem().Kind(), v.Elem(), pathValue)
-	return nil
+	return util.ConvertValue(pathValue, target)
 }
 
 func (p *Parser) MustPathValue(key string, target any) {
@@ -91,19 +87,17 @@ func (p *Parser) MustPathValue(key string, target any) {
 func (p *Parser) Url(target any) error {
 	t := reflect.TypeOf(target)
 	if t.Kind() != reflect.Ptr {
-		return errors.New("target must be a pointer")
+		return util.ErrorPointerTarget
 	}
-	v := reflect.ValueOf(target)
+	v := reflect.ValueOf(target).Elem()
 	for i := 0; i < t.Elem().NumField(); i++ {
-		queryKey := t.Elem().Field(i).Tag.Get("query")
-		if len(queryKey) > 0 && p.r.URL.Query().Has(queryKey) {
-			queryParam := p.r.URL.Query().Get(queryKey)
-			util.SetValueToReflected(t.Elem().Field(i).Type.Kind(), v.Elem().Field(i), queryParam)
+		fieldInfo := t.Elem().Field(i)
+		fieldValue := v.Field(i).Addr().Interface()
+		if err := p.processQuery(fieldInfo, fieldValue); err != nil {
+			return err
 		}
-		pathKey := t.Elem().Field(i).Tag.Get("path")
-		pathValue := p.r.PathValue(pathKey)
-		if len(pathKey) > 0 && len(pathValue) > 0 {
-			util.SetValueToReflected(t.Elem().Field(i).Type.Kind(), v.Elem().Field(i), pathValue)
+		if err := p.processPathValue(fieldInfo, fieldValue); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -261,4 +255,25 @@ func (p *Parser) parseMultipartForm() error {
 		return ErrorInvalidMultipart
 	}
 	return p.r.ParseMultipartForm(p.limit << 20)
+}
+
+func (p *Parser) processQuery(fieldInfo reflect.StructField, fieldValue any) error {
+	queryKey := fieldInfo.Tag.Get("query")
+	q, exists := p.r.URL.Query()[queryKey]
+	if !exists || len(q) == 0 {
+		return nil
+	}
+	if len(q) == 1 {
+		return util.ConvertValue(q[0], fieldValue)
+	}
+	return util.ConvertSlice(q, fieldValue)
+}
+
+func (p *Parser) processPathValue(fieldInfo reflect.StructField, fieldValue any) error {
+	pathKey := fieldInfo.Tag.Get("path")
+	pathValue := p.r.PathValue(pathKey)
+	if pathValue == "" {
+		return nil
+	}
+	return util.ConvertValue(pathValue, fieldValue)
 }

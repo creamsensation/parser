@@ -3,8 +3,8 @@ module github.com/creamsensation/parser
 go 1.22
 
 require (
-	github.com/creamsensation/form v0.1.3
-	github.com/creamsensation/util v0.1.0
+	github.com/creamsensation/form v0.1.4
+	github.com/creamsensation/util v0.1.1
 )
 
 require (
