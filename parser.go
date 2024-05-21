@@ -50,7 +50,7 @@ func (p *Parser) Query(key string, target any) error {
 	q := p.r.URL.Query()
 	qv, ok := q[key]
 	if !ok {
-		return ErrorQueryMissing
+		return nil
 	}
 	n := len(qv)
 	if n == 1 {
